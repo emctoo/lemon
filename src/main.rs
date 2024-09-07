@@ -2,7 +2,9 @@ use structopt::StructOpt;
 use tracing::info;
 
 mod client;
+mod clipboard;
 mod commands;
+mod ntfy;
 mod server;
 
 #[derive(Debug, StructOpt)]
@@ -34,6 +36,9 @@ enum Command {
 
     #[structopt(name = "paste")]
     Paste,
+
+    #[structopt(name = "client")]
+    Client,
 }
 
 #[tokio::main]
@@ -65,6 +70,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .paste()
                 .await?;
             println!("{}", text);
+        }
+        Command::Client => {
+            info!("Starting client in listening mode");
+            client::LemonadeClient::new(opt.host, 12490).start().await?;
         }
     }
 

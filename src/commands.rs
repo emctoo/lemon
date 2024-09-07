@@ -1,10 +1,17 @@
 use serde::{Deserialize, Serialize};
+use structopt::StructOpt;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, StructOpt)]
 pub enum Command {
-    Copy { text: String },
+    Copy {
+        text: String,
+    },
     Paste,
-    Open { url: String },
+    Open {
+        url: String,
+    },
+    #[structopt(name = "client")]
+    Client,
 }
 
 #[derive(Serialize, Deserialize)]
