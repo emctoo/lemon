@@ -1,0 +1,68 @@
+use crate::commands::{Command, Response};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tracing::{error, info};
+
+pub struct LemonadeClient {
+    host: String,
+    port: u16,
+}
+
+impl LemonadeClient {
+    pub fn new(host: String, port: u16) -> Self {
+        LemonadeClient { host, port }
+    }
+
+    async fn send_command(&self, command: Command) -> Result<Response, Box<dyn std::error::Error>> {
+        let mut stream = TcpStream::connect(format!("{}:{}", self.host, self.port)).await?;
+
+        let request = serde_json::to_string(&command)?;
+        stream.write_all(request.as_bytes()).await?;
+
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await?;
+
+        let response: Response = serde_json::from_str(&response)?;
+        Ok(response)
+    }
+
+    pub async fn open(&self, url: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let response = self
+            .send_command(Command::Open {
+                url: url.to_string(),
+            })
+            .await?;
+        if response.success {
+            info!("Opened URL: {}", url);
+        } else {
+            error!("Failed to open URL: {}", response.message);
+        }
+        Ok(())
+    }
+
+    pub async fn copy(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let response = self
+            .send_command(Command::Copy {
+                text: text.to_string(),
+            })
+            .await?;
+        if response.success {
+            info!("Copied text to clipboard");
+        } else {
+            error!("Failed to copy text: {}", response.message);
+        }
+        Ok(())
+    }
+
+    pub async fn paste(&self) -> Result<String, Box<dyn std::error::Error>> {
+        let response = self.send_command(Command::Paste).await?;
+        if response.success {
+            info!("Pasted text from clipboard");
+            Ok(response.message)
+        } else {
+            error!("Failed to paste: {}", response.message);
+            Err(response.message.into())
+        }
+    }
+}
+
