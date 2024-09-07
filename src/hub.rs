@@ -1,13 +1,29 @@
+use futures_util::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info};
 
-pub async fn run_hub_server() -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind("0.0.0.0:12491").await?;
-    info!("Hub server listening on port 12491");
+pub async fn run_hub_server(
+    host: String,
+    port: u16,
+    ntfy_topic: Option<String>,
+    ntfy_host: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind(format!("{}:{}", host, port)).await?;
+    info!("Hub server listening on {}:{}", host, port);
 
     let (tx, _) = broadcast::channel::<String>(100);
+
+    if let Some(topic) = ntfy_topic {
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = run_ntfy_subscriber(topic, ntfy_host, tx_clone).await {
+                error!("Error in ntfy subscriber: {}", e);
+            }
+        });
+    }
 
     loop {
         let (socket, addr) = listener.accept().await?;
@@ -69,3 +85,38 @@ async fn handle_server(
     Ok(())
 }
 
+async fn run_ntfy_subscriber(
+    topic: String,
+    ntfy_host: String,
+    tx: broadcast::Sender<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let url_string = format!("wss://{}/{}/ws", ntfy_host, topic);
+
+    loop {
+        match connect_async(&url_string).await {
+            Ok((ws_stream, _)) => {
+                info!("WebSocket connected to ntfy topic: {}", topic);
+                let (_, mut read) = ws_stream.split();
+
+                while let Some(message) = read.next().await {
+                    match message {
+                        Ok(msg) => {
+                            if let Message::Text(text) = msg {
+                                let json: serde_json::Value = serde_json::from_str(&text)?;
+                                if let Some(message) = json["message"].as_str() {
+                                    info!("Received message from ntfy, broadcasting to servers");
+                                    tx.send(message.to_string())?;
+                                }
+                            }
+                        }
+                        Err(e) => error!("Error receiving message from ntfy: {}", e),
+                    }
+                }
+            }
+            Err(e) => {
+                error!("WebSocket connection error: {}", e);
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        }
+    }
+}

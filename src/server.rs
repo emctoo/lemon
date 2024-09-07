@@ -1,6 +1,5 @@
 use crate::clipboard::watch_clipboard;
 use crate::commands::{Command, Response};
-use crate::ntfy::ntfy_subscriber;
 use arboard::Clipboard;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -10,36 +9,43 @@ use tokio::sync::{broadcast, Mutex};
 use tracing::{debug, error, info};
 
 pub async fn run_server(
+    host: String,
     port: u16,
-    ntfy_topic: Option<String>,
+    hub_host: String,
+    hub_port: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (clipboard_tx, _) = broadcast::channel::<String>(100);
 
-    // Start clipboard watcher
-    let clipboard_tx_clone = clipboard_tx.clone();
-    tokio::spawn(watch_clipboard(clipboard_tx_clone));
-
-    if let Some(topic) = ntfy_topic {
-        tokio::spawn(ntfy_subscriber(topic));
-    }
-
     // Connect to hub
-    let hub_stream = TcpStream::connect("192.168.8.34:12491").await?;
+    let hub_stream = TcpStream::connect(format!("{}:{}", hub_host, hub_port)).await?;
     let (hub_reader, hub_writer) = hub_stream.into_split();
     let hub_writer = Arc::new(Mutex::new(hub_writer));
+
+    // Get local IP address
+    let local_ip = local_ip_address::local_ip()?;
+
+    // Start clipboard watcher
+    let clipboard_tx_clone = clipboard_tx.clone();
+    let hub_writer_clone = Arc::clone(&hub_writer);
+    tokio::spawn(watch_clipboard(
+        clipboard_tx_clone,
+        hub_writer_clone,
+        local_ip.to_string(),
+    ));
 
     let clipboard_tx_for_hub = clipboard_tx.clone();
     tokio::spawn(handle_hub_messages(hub_reader, clipboard_tx_for_hub));
 
     // Start the original server on the specified port
     let original_server = tokio::spawn(run_original_server(
+        host.clone(),
         port,
         clipboard_tx.clone(),
         Arc::clone(&hub_writer),
     ));
 
     // Start the new client mode server on port 12490
-    let new_client_server = tokio::spawn(run_new_client_server(12490, clipboard_tx));
+    let new_client_server = tokio::spawn(run_new_client_server(host, 12490, clipboard_tx));
 
     // Wait for both servers to complete (which they shouldn't unless there's an error)
     tokio::try_join!(original_server, new_client_server)?;
@@ -48,12 +54,13 @@ pub async fn run_server(
 }
 
 async fn run_original_server(
+    host: String,
     port: u16,
     clipboard_tx: broadcast::Sender<String>,
     hub_writer: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
-    info!("Original server listening on port {}", port);
+    let listener = TcpListener::bind(format!("{}:{}", host, port)).await?;
+    info!("Original server listening on {}:{}", host, port);
 
     loop {
         let (socket, addr) = listener.accept().await?;
@@ -66,13 +73,13 @@ async fn run_original_server(
         });
     }
 }
-
 async fn run_new_client_server(
+    host: String,
     port: u16,
     clipboard_tx: broadcast::Sender<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
-    info!("New client mode server listening on port {}", port);
+    let listener = TcpListener::bind(format!("{}:{}", host, port)).await?;
+    info!("New client mode server listening on {}:{}", host, port);
 
     loop {
         let (socket, _) = listener.accept().await?;
@@ -237,6 +244,14 @@ async fn handle_hub_messages(
                                 info!("Received content from hub, updated clipboard");
                                 let _ = clipboard_tx.send(content.to_string());
                             }
+                        }
+                    } else {
+                        // Handle messages from ntfy (they don't have a source IP)
+                        if let Err(e) = clipboard.set_text(message.clone()) {
+                            error!("Failed to set clipboard: {}", e);
+                        } else {
+                            info!("Received content from ntfy via hub, updated clipboard");
+                            let _ = clipboard_tx.send(message);
                         }
                     }
                 }

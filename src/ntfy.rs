@@ -4,21 +4,6 @@ use tokio::sync::broadcast;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info};
 
-pub async fn watch_clipboard(tx: broadcast::Sender<String>) {
-    let mut clipboard = Clipboard::new().expect("Failed to initialize clipboard");
-    let mut last_content = String::new();
-
-    loop {
-        if let Ok(content) = clipboard.get_text() {
-            if content != last_content {
-                last_content = content.clone();
-                let _ = tx.send(content);
-            }
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    }
-}
-
 pub async fn ntfy_subscriber(topic: String) {
     let url_string = format!("wss://ntfy.sh/{}/ws", topic);
 
@@ -64,3 +49,4 @@ pub async fn ntfy_subscriber(topic: String) {
         }
     }
 }
+

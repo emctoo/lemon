@@ -5,7 +5,6 @@ mod client;
 mod clipboard;
 mod commands;
 mod hub;
-mod ntfy;
 mod server;
 
 #[derive(Debug, StructOpt)]
@@ -13,36 +12,67 @@ mod server;
 struct Opt {
     #[structopt(subcommand)]
     cmd: Command,
-
-    #[structopt(long, default_value = "12489")]
-    port: u16,
-
-    #[structopt(long, default_value = "localhost")]
-    host: String,
 }
 
 #[derive(Debug, StructOpt)]
 enum Command {
     #[structopt(name = "server")]
     Server {
+        #[structopt(long, default_value = "0.0.0.0")]
+        host: String,
+        #[structopt(long, default_value = "12489")]
+        port: u16,
+        #[structopt(long, default_value = "localhost")]
+        hub_host: String,
+        #[structopt(long, default_value = "12491")]
+        hub_port: u16,
+    },
+
+    #[structopt(name = "hub")]
+    Hub {
+        #[structopt(long, default_value = "0.0.0.0")]
+        host: String,
+        #[structopt(long, default_value = "12491")]
+        port: u16,
         #[structopt(long)]
         ntfy_topic: Option<String>,
+        #[structopt(long, default_value = "ntfy.sh")]
+        ntfy_host: String,
     },
 
     #[structopt(name = "open")]
-    Open { url: String },
+    Open {
+        url: String,
+        #[structopt(long, default_value = "localhost")]
+        host: String,
+        #[structopt(long, default_value = "12489")]
+        port: u16,
+    },
 
     #[structopt(name = "copy")]
-    Copy { text: String },
+    Copy {
+        text: String,
+        #[structopt(long, default_value = "localhost")]
+        host: String,
+        #[structopt(long, default_value = "12489")]
+        port: u16,
+    },
 
     #[structopt(name = "paste")]
-    Paste,
+    Paste {
+        #[structopt(long, default_value = "localhost")]
+        host: String,
+        #[structopt(long, default_value = "12489")]
+        port: u16,
+    },
 
     #[structopt(name = "client")]
-    Client,
-
-    #[structopt(name = "hub")]
-    Hub,
+    Client {
+        #[structopt(long, default_value = "localhost")]
+        host: String,
+        #[structopt(long, default_value = "12490")]
+        port: u16,
+    },
 }
 
 #[tokio::main]
@@ -52,38 +82,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opt = Opt::from_args();
 
     match opt.cmd {
-        Command::Server { ntfy_topic } => {
-            info!("Starting server on port {}", opt.port);
-            server::run_server(opt.port, ntfy_topic).await?;
+        Command::Server {
+            host,
+            port,
+            hub_host,
+            hub_port,
+        } => {
+            info!("Starting server on {}:{}", host, port);
+            server::run_server(host, port, hub_host, hub_port).await?;
         }
-        Command::Open { url } => {
+        Command::Hub {
+            host,
+            port,
+            ntfy_topic,
+            ntfy_host,
+        } => {
+            info!("Starting hub server on {}:{}", host, port);
+            hub::run_hub_server(host, port, ntfy_topic, ntfy_host).await?;
+        }
+        Command::Open { url, host, port } => {
             info!("Opening URL: {}", url);
-            client::LemonadeClient::new(opt.host, opt.port)
-                .open(&url)
-                .await?;
+            client::LemonadeClient::new(host, port).open(&url).await?;
         }
-        Command::Copy { text } => {
+        Command::Copy { text, host, port } => {
             info!("Copying text to clipboard");
-            client::LemonadeClient::new(opt.host, opt.port)
-                .copy(&text)
-                .await?;
+            client::LemonadeClient::new(host, port).copy(&text).await?;
         }
-        Command::Paste => {
+        Command::Paste { host, port } => {
             info!("Pasting from clipboard");
-            let text = client::LemonadeClient::new(opt.host, opt.port)
-                .paste()
-                .await?;
+            let text = client::LemonadeClient::new(host, port).paste().await?;
             println!("{}", text);
         }
-        Command::Client => {
+        Command::Client { host, port } => {
             info!("Starting client in listening mode");
-            client::LemonadeClient::new(opt.host, 12490).start().await?;
-        }
-        Command::Hub => {
-            info!("Starting hub server on port 12491");
-            hub::run_hub_server().await?;
+            client::LemonadeClient::new(host, port).start().await?;
         }
     }
 
     Ok(())
 }
+
