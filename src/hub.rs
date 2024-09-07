@@ -30,7 +30,7 @@ pub async fn run_hub_server(
         info!("New server connected: {}", addr);
 
         let tx = tx.clone();
-        let mut rx = tx.subscribe();
+        let rx = tx.subscribe();
 
         tokio::spawn(async move {
             if let Err(e) = handle_server(socket, addr, tx, rx).await {

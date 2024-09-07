@@ -65,14 +65,6 @@ enum Command {
         #[structopt(long, default_value = "12489")]
         port: u16,
     },
-
-    #[structopt(name = "client")]
-    Client {
-        #[structopt(long, default_value = "localhost")]
-        host: String,
-        #[structopt(long, default_value = "12490")]
-        port: u16,
-    },
 }
 
 #[tokio::main]
@@ -113,12 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let text = client::LemonadeClient::new(host, port).paste().await?;
             println!("{}", text);
         }
-        Command::Client { host, port } => {
-            info!("Starting client in listening mode");
-            client::LemonadeClient::new(host, port).start().await?;
-        }
     }
 
     Ok(())
 }
-

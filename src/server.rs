@@ -43,12 +43,13 @@ pub async fn run_server(
         clipboard_tx.clone(),
         Arc::clone(&hub_writer),
     ));
+    let _ = original_server.await?;
 
     // Start the new client mode server on port 12490
-    let new_client_server = tokio::spawn(run_new_client_server(host, 12490, clipboard_tx));
+    // let new_client_server = tokio::spawn(run_new_client_server(host, 12490, clipboard_tx));
 
     // Wait for both servers to complete (which they shouldn't unless there's an error)
-    tokio::try_join!(original_server, new_client_server)?;
+    // tokio::try_join!(original_server, new_client_server)?;
 
     Ok(())
 }
@@ -73,25 +74,26 @@ async fn run_original_server(
         });
     }
 }
-async fn run_new_client_server(
-    host: String,
-    port: u16,
-    clipboard_tx: broadcast::Sender<String>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let listener = TcpListener::bind(format!("{}:{}", host, port)).await?;
-    info!("New client mode server listening on {}:{}", host, port);
 
-    loop {
-        let (socket, _) = listener.accept().await?;
-        let clipboard_tx = clipboard_tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = handle_new_client(socket, clipboard_tx).await {
-                error!("Error handling new client: {}", e);
-            }
-        });
-    }
-}
-
+// async fn run_new_client_server(
+//     host: String,
+//     port: u16,
+//     clipboard_tx: broadcast::Sender<String>,
+// ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//     let listener = TcpListener::bind(format!("{}:{}", host, port)).await?;
+//     info!("New client mode server listening on {}:{}", host, port);
+//
+//     loop {
+//         let (socket, _) = listener.accept().await?;
+//         let clipboard_tx = clipboard_tx.clone();
+//         tokio::spawn(async move {
+//             if let Err(e) = handle_new_client(socket, clipboard_tx).await {
+//                 error!("Error handling new client: {}", e);
+//             }
+//         });
+//     }
+// }
+//
 async fn handle_original_client(
     mut socket: TcpStream,
     addr: SocketAddr,
@@ -175,48 +177,48 @@ async fn handle_original_client(
     Ok(())
 }
 
-async fn handle_new_client(
-    mut socket: TcpStream,
-    clipboard_tx: broadcast::Sender<String>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut clipboard_rx = clipboard_tx.subscribe();
-    let mut buffer = [0u8; 1024];
-
-    loop {
-        tokio::select! {
-            clipboard_content = clipboard_rx.recv() => {
-                match clipboard_content {
-                    Ok(content) => {
-                        let response = Response {
-                            success: true,
-                            message: content,
-                        };
-                        let response_json = serde_json::to_string(&response)?;
-                        socket.write_all(response_json.as_bytes()).await?;
-                    },
-                    Err(e) => {
-                        error!("Error receiving clipboard content: {}", e);
-                    }
-                }
-            },
-            result = socket.read(&mut buffer) => {
-                match result {
-                    Ok(0) => break, // Connection closed
-                    Ok(n) => {
-                        // Process the received data if needed
-                        info!("Received {} bytes from new client", n);
-                    },
-                    Err(e) => {
-                        error!("Error reading from new client: {}", e);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
+// async fn handle_new_client(
+//     mut socket: TcpStream,
+//     clipboard_tx: broadcast::Sender<String>,
+// ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//     let mut clipboard_rx = clipboard_tx.subscribe();
+//     let mut buffer = [0u8; 1024];
+//
+//     loop {
+//         tokio::select! {
+//             clipboard_content = clipboard_rx.recv() => {
+//                 match clipboard_content {
+//                     Ok(content) => {
+//                         let response = Response {
+//                             success: true,
+//                             message: content,
+//                         };
+//                         let response_json = serde_json::to_string(&response)?;
+//                         socket.write_all(response_json.as_bytes()).await?;
+//                     },
+//                     Err(e) => {
+//                         error!("Error receiving clipboard content: {}", e);
+//                     }
+//                 }
+//             },
+//             result = socket.read(&mut buffer) => {
+//                 match result {
+//                     Ok(0) => break, // Connection closed
+//                     Ok(n) => {
+//                         // Process the received data if needed
+//                         info!("Received {} bytes from new client", n);
+//                     },
+//                     Err(e) => {
+//                         error!("Error reading from new client: {}", e);
+//                         break;
+//                     }
+//                 }
+//             }
+//         }
+//     }
+//
+//     Ok(())
+// }
 
 async fn handle_hub_messages(
     mut hub_reader: tokio::net::tcp::OwnedReadHalf,

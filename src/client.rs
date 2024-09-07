@@ -1,5 +1,4 @@
 use crate::commands::{Command, Response};
-use arboard::Clipboard;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{error, info};
@@ -12,33 +11,6 @@ pub struct LemonadeClient {
 impl LemonadeClient {
     pub fn new(host: String, port: u16) -> Self {
         LemonadeClient { host, port }
-    }
-
-    pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut stream = TcpStream::connect(format!("{}:{}", self.host, self.port)).await?;
-        let mut clipboard = Clipboard::new()?;
-
-        loop {
-            let mut buffer = vec![0; 1024];
-            match stream.read(&mut buffer).await {
-                Ok(0) => break, // Connection closed
-                Ok(n) => {
-                    let response: Response = serde_json::from_slice(&buffer[..n])?;
-                    if response.success {
-                        clipboard.set_text(response.message.clone())?;
-                        info!("Updated local clipboard: {}", response.message);
-                    } else {
-                        error!("Error from server: {}", response.message);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to read from server: {}", e);
-                    break;
-                }
-            }
-        }
-
-        Ok(())
     }
 
     async fn send_command(&self, command: Command) -> Result<Response, Box<dyn std::error::Error>> {
