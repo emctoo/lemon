@@ -2,9 +2,11 @@ use crate::clipboard::watch_clipboard;
 use crate::commands::{Command, Response};
 use crate::ntfy::ntfy_subscriber;
 use arboard::Clipboard;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex};
 use tracing::{debug, error, info};
 
 pub async fn run_server(
@@ -21,8 +23,20 @@ pub async fn run_server(
         tokio::spawn(ntfy_subscriber(topic));
     }
 
+    // Connect to hub
+    let hub_stream = TcpStream::connect("192.168.8.34:12491").await?;
+    let (hub_reader, hub_writer) = hub_stream.into_split();
+    let hub_writer = Arc::new(Mutex::new(hub_writer));
+
+    let clipboard_tx_for_hub = clipboard_tx.clone();
+    tokio::spawn(handle_hub_messages(hub_reader, clipboard_tx_for_hub));
+
     // Start the original server on the specified port
-    let original_server = tokio::spawn(run_original_server(port, clipboard_tx.clone()));
+    let original_server = tokio::spawn(run_original_server(
+        port,
+        clipboard_tx.clone(),
+        Arc::clone(&hub_writer),
+    ));
 
     // Start the new client mode server on port 12490
     let new_client_server = tokio::spawn(run_new_client_server(12490, clipboard_tx));
@@ -36,15 +50,17 @@ pub async fn run_server(
 async fn run_original_server(
     port: u16,
     clipboard_tx: broadcast::Sender<String>,
+    hub_writer: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     info!("Original server listening on port {}", port);
 
     loop {
-        let (socket, _) = listener.accept().await?;
+        let (socket, addr) = listener.accept().await?;
         let clipboard_tx = clipboard_tx.clone();
+        let hub_writer = Arc::clone(&hub_writer);
         tokio::spawn(async move {
-            if let Err(e) = handle_original_client(socket, clipboard_tx).await {
+            if let Err(e) = handle_original_client(socket, addr, clipboard_tx, hub_writer).await {
                 error!("Error handling original client: {}", e);
             }
         });
@@ -71,7 +87,9 @@ async fn run_new_client_server(
 
 async fn handle_original_client(
     mut socket: TcpStream,
+    addr: SocketAddr,
     clipboard_tx: broadcast::Sender<String>,
+    hub_writer: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut buffer = [0; 1024];
     let mut clipboard = Clipboard::new()?;
@@ -87,10 +105,16 @@ async fn handle_original_client(
             debug!("send clipboard text to subscribers: {}", text);
             let _ = clipboard_tx.send(text.clone());
 
-            info!("Text copied to clipboard");
+            // Send to hub
+            let hub_message = format!("{}:{}", addr.ip(), text);
+            let mut hub_writer = hub_writer.lock().await;
+            hub_writer.write_u32(hub_message.len() as u32).await?;
+            hub_writer.write_all(hub_message.as_bytes()).await?;
+
+            info!("Text copied to clipboard and sent to hub");
             Response {
                 success: true,
-                message: "Text copied to clipboard".to_string(),
+                message: "Text copied to clipboard and sent to hub".to_string(),
             }
         }
         Command::Paste => match clipboard.get_text() {
@@ -185,4 +209,42 @@ async fn handle_new_client(
     }
 
     Ok(())
+}
+
+async fn handle_hub_messages(
+    mut hub_reader: tokio::net::tcp::OwnedReadHalf,
+    clipboard_tx: broadcast::Sender<String>,
+) {
+    let mut clipboard = Clipboard::new().expect("Failed to initialize clipboard");
+    let local_ip = local_ip_address::local_ip().expect("Failed to get local IP");
+
+    loop {
+        let mut size_buffer = [0u8; 4];
+        match hub_reader.read_exact(&mut size_buffer).await {
+            Ok(_) => {
+                let size = u32::from_be_bytes(size_buffer);
+                let mut buffer = vec![0u8; size as usize];
+                if hub_reader.read_exact(&mut buffer).await.is_ok() {
+                    let message = String::from_utf8_lossy(&buffer).to_string();
+                    let parts: Vec<&str> = message.splitn(2, ':').collect();
+                    if parts.len() == 2 {
+                        let source_ip = parts[0];
+                        let content = parts[1];
+                        if source_ip != local_ip.to_string() {
+                            if let Err(e) = clipboard.set_text(content.to_string()) {
+                                error!("Failed to set clipboard: {}", e);
+                            } else {
+                                info!("Received content from hub, updated clipboard");
+                                let _ = clipboard_tx.send(content.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Error reading from hub: {}", e);
+                break;
+            }
+        }
+    }
 }

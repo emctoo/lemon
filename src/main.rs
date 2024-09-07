@@ -4,6 +4,7 @@ use tracing::info;
 mod client;
 mod clipboard;
 mod commands;
+mod hub;
 mod ntfy;
 mod server;
 
@@ -39,6 +40,9 @@ enum Command {
 
     #[structopt(name = "client")]
     Client,
+
+    #[structopt(name = "hub")]
+    Hub,
 }
 
 #[tokio::main]
@@ -74,6 +78,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Client => {
             info!("Starting client in listening mode");
             client::LemonadeClient::new(opt.host, 12490).start().await?;
+        }
+        Command::Hub => {
+            info!("Starting hub server on port 12491");
+            hub::run_hub_server().await?;
         }
     }
 

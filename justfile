@@ -3,6 +3,9 @@ _default:
 
 now := `date "+%FT%T"`
 
+hub:
+  RUST_LOG=debug cargo r -- hub
+
 server:
   RUST_LOG=debug cargo r -- server --ntfy-topic emctoo-hello
 
